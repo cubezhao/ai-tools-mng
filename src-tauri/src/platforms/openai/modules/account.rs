@@ -111,8 +111,8 @@ pub async fn refresh_quota_and_backfill(account: &mut Account) -> Result<QuotaDa
     Ok(quota)
 }
 
-fn missing_subscription_expiry(account: &Account) -> bool {
-    account
+pub(crate) fn missing_subscription_expiry(account: &Account) -> bool {
+    let expiry_str = account
         .openai_auth_json
         .as_deref()
         .and_then(|json| serde_json::from_str::<serde_json::Value>(json).ok())
@@ -121,10 +121,21 @@ fn missing_subscription_expiry(account: &Account) -> bool {
                 .get("chatgpt_subscription_active_until")
                 .and_then(serde_json::Value::as_str)
                 .map(str::trim)
-                .map(|value| !value.is_empty())
-        })
-        .map(|has_value| !has_value)
-        .unwrap_or(true)
+                .filter(|v| !v.is_empty())
+                .map(ToOwned::to_owned)
+        });
+
+    match expiry_str {
+        // 无订阅到期数据，需要补充
+        None => true,
+        Some(expiry) => {
+            // JWT id_token 中的订阅到期时间是 token 签发时的快照。
+            // 如果存储的到期日已过，可能已经自动续费，需要重新通过 API 获取。
+            chrono::DateTime::parse_from_rfc3339(&expiry)
+                .map(|dt| dt < chrono::Utc::now())
+                .unwrap_or(false)
+        }
+    }
 }
 
 pub async fn refresh_token_if_needed(
