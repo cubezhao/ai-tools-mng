@@ -104,6 +104,27 @@
               <span v-if="!isSidebarCollapsed" class="flex-1 min-w-0 truncate">{{ $t('emails.title') }}</span>
             </button>
 
+            <!-- Gateway Button -->
+            <button
+              :class="[
+                'btn btn--ghost btn--lg min-w-0 w-full',
+                isSidebarCollapsed ? 'justify-center px-2 py-2.5' : 'justify-start px-3 py-2.5',
+                activeView === 'gateway'
+                  ? 'text-accent'
+                  : '',
+              ]"
+              @click="navigateToView('gateway')"
+              v-tooltip="$t('gateway.title')"
+            >
+              <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="2" width="20" height="8" rx="2" />
+                <rect x="2" y="14" width="20" height="8" rx="2" />
+                <path d="M6 6h.01" />
+                <path d="M6 18h.01" />
+              </svg>
+              <span v-if="!isSidebarCollapsed" class="flex-1 min-w-0 truncate">{{ $t('gateway.title') }}</span>
+            </button>
+
           </nav>
 
           <!-- Sidebar Bottom: Controls -->
@@ -215,6 +236,9 @@
           :is-sidebar-collapsed="isSidebarCollapsed"
         />
 
+        <!-- Gateway View (v-show to preserve tab state when switching sidebar) -->
+        <GatewayPage v-show="activeView === 'gateway'" />
+
         <!-- Settings View -->
         <SettingsPage v-if="activeView === 'settings'" :key="'settings-' + viewRefreshKey" />
       </main>
@@ -262,6 +286,7 @@ import BookmarkPage from './components/pages/BookmarkPage.vue'
 import EmailPage from './components/pages/EmailPage.vue'
 import SettingsPage from './components/pages/SettingsPage.vue'
 import SubscriptionPage from './components/pages/SubscriptionPage.vue'
+import GatewayPage from './components/pages/GatewayPage.vue'
 import SpotlightSearch from './components/spotlight/SpotlightSearch.vue'
 
 const { t, locale } = useI18n()

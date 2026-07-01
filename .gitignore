@@ -8,3 +8,8 @@ dist/
 .cursor/
 .claude/
 nul
+.augment/
+.codex/
+.agents/
+AGENTS.md
+openspec/

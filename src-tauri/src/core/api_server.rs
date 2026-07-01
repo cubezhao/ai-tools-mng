@@ -140,6 +140,10 @@ pub async fn start_api_server_cmd(
             codex_server_config: state.codex_server_config.clone(),
             codex_log_storage: state.codex_log_storage.clone(),
             proxy_config: state.proxy_config.clone(),
+            gateway_config: state.gateway_config.clone(),
+            gateway_usage: state.gateway_usage.clone(),
+            gateway_affinity: state.gateway_affinity.clone(),
+            gateway_stream_client: state.gateway_stream_client.clone(),
             outlook_oauth_pending: Mutex::new(None),
         }),
         8766,
@@ -744,6 +748,10 @@ async fn try_bind_server(state: Arc<crate::AppState>, port: u16) -> Result<ApiSe
         .or(import_sessions_route)
         .boxed();
 
+    // 网关 /gateway/* 路由（复用同一个 HTTP 监听器，置于 codex 透传之前）
+    let gateway_routes =
+        crate::core::gateway::server::gateway_routes_from_state(state.clone()).boxed();
+
     // Codex /v1/* 路由（复用同一个 HTTP 监听器）
     let codex_routes =
         crate::platforms::openai::codex::server::codex_routes_from_state(state).boxed();
@@ -759,8 +767,9 @@ async fn try_bind_server(state: Arc<crate::AppState>, port: u16) -> Result<ApiSe
             "Accept-Encoding",
         ]);
 
-    // 组合所有路由
+    // 组合所有路由（网关置于 codex catch-all 之前）
     let routes = api_routes
+        .or(gateway_routes)
         .or(codex_routes)
         .with(cors)
         .recover(handle_rejection);
@@ -846,6 +855,46 @@ async fn handle_rejection(err: Rejection) -> Result<impl Reply, Rejection> {
             ),
         };
 
+        Ok(warp::reply::with_status(
+            warp::reply::json(&json!({
+                "error": {
+                    "message": message,
+                    "type": code,
+                    "code": status.as_u16().to_string()
+                }
+            })),
+            status,
+        ))
+    } else if let Some(rej) = err.find::<crate::core::gateway::server::GatewayRejection>() {
+        use crate::core::gateway::server::GatewayRejection;
+        let (status, message, code) = match rej {
+            GatewayRejection::Disabled => (
+                warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Gateway is disabled".to_string(),
+                "gateway_disabled",
+            ),
+            GatewayRejection::Unauthorized(msg) => {
+                (warp::http::StatusCode::UNAUTHORIZED, msg.clone(), "unauthorized")
+            }
+            GatewayRejection::BadRequest(msg) => (
+                warp::http::StatusCode::BAD_REQUEST,
+                msg.clone(),
+                "invalid_request_error",
+            ),
+            GatewayRejection::NoChannel(msg) => (
+                warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                msg.clone(),
+                "no_available_channel",
+            ),
+            GatewayRejection::Upstream(msg) => {
+                (warp::http::StatusCode::BAD_GATEWAY, msg.clone(), "upstream_error")
+            }
+            GatewayRejection::Internal(msg) => (
+                warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                msg.clone(),
+                "internal_error",
+            ),
+        };
         Ok(warp::reply::with_status(
             warp::reply::json(&json!({
                 "error": {

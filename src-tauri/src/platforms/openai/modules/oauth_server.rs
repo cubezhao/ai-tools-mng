@@ -73,16 +73,49 @@ pub fn cancel_oauth_flow() {
     clear_oauth_data();
 }
 
+/// 绑定 OAuth 回调监听端口，带重试以等待上一次流程释放端口 1455
+async fn bind_callback_listener() -> Result<TcpListener, String> {
+    const MAX_ATTEMPTS: u32 = 20;
+    let mut last_err = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        match TcpListener::bind("127.0.0.1:1455").await {
+            Ok(listener) => return Ok(listener),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt + 1 < MAX_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                }
+            }
+        }
+    }
+    Err(format!(
+        "无法绑定本地端口 1455: {}。请确认没有其他程序占用该端口后重试",
+        last_err
+            .map(|e| e.to_string())
+            .unwrap_or_else(|| "未知错误".to_string())
+    ))
+}
+
 /// 启动 OAuth 流程
 /// 1. 启动本地服务器监听回调
 /// 2. 打开浏览器访问授权页面
 /// 3. 等待并捕获 code
 /// 4. 交换 token
 pub async fn start_oauth_flow(app_handle: tauri::AppHandle) -> Result<Account, String> {
-    // 创建取消通道
-    let (tx, rx) = oneshot::channel::<()>();
+    // 先取消可能仍在运行的上一次授权流程，避免端口 1455 被占用
+    cancel_oauth_flow();
 
-    // 存储发送端
+    // 1. 生成 PKCE 参数
+    let code_verifier = oauth::generate_code_verifier();
+    let code_challenge = oauth::generate_code_challenge(&code_verifier)?;
+    let state = oauth::generate_state();
+
+    // 2. 启动本地监听器 (固定端口 1455，带重试以等待上一次流程释放端口)
+    let listener = bind_callback_listener().await?;
+    let redirect_uri = "http://localhost:1455/auth/callback".to_string();
+
+    // 成功绑定端口后再写入全局状态，避免与被取消流程的清理产生竞态
+    let (tx, rx) = oneshot::channel::<()>();
     {
         let mutex = get_cancellation_token();
         if let Ok(mut lock) = mutex.lock() {
@@ -90,27 +123,8 @@ pub async fn start_oauth_flow(app_handle: tauri::AppHandle) -> Result<Account, S
         }
     }
 
-    // 1. 生成 PKCE 参数
-    let code_verifier = oauth::generate_code_verifier();
-    let code_challenge = oauth::generate_code_challenge(&code_verifier).map_err(|e| {
-        clear_oauth_data();
-        clear_cancellation_token();
-        e
-    })?;
-    let state = oauth::generate_state();
-
     // 存储 OAuth 数据
     set_oauth_data(code_verifier, state.clone());
-
-    // 2. 启动本地监听器 (使用固定端口 1455)
-    let listener = TcpListener::bind("127.0.0.1:1455")
-        .await
-        .map_err(|e| {
-            clear_oauth_data();
-            clear_cancellation_token();
-            format!("无法绑定本地端口 1455: {}", e)
-        })?;
-    let redirect_uri = "http://localhost:1455/auth/callback".to_string();
 
     // 3. 构建授权 URL
     let auth_url = oauth::build_authorization_url(&state, &code_challenge, &redirect_uri).map_err(

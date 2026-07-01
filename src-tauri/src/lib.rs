@@ -15,6 +15,10 @@ pub mod features {
 pub mod core {
     pub mod api_server;
     pub mod app_commands;
+    pub mod gateway;
+    pub mod gateway_channel;
+    pub mod gateway_custom_models;
+    pub mod gateway_models;
     pub mod http_client;
     pub mod path_manager;
     pub mod proxy_config;
@@ -40,6 +44,9 @@ pub use data::{database, storage};
 pub use features::mail;
 pub use platforms::{antigravity, augment, claude, cursor, openai, windsurf};
 
+use crate::core::gateway::affinity::SessionAffinity;
+use crate::core::gateway::config::GatewayConfig;
+use crate::core::gateway::usage::GatewayUsageStore;
 use crate::core::tray::TrayState;
 use crate::data::bookmark::BookmarkDualStorage;
 use crate::data::subscription::SubscriptionDualStorage;
@@ -106,8 +113,38 @@ pub struct AppState {
     pub codex_server_config: Arc<Mutex<Option<CodexServerConfig>>>,
     pub codex_log_storage: Arc<Mutex<Option<Arc<CodexLogStorage>>>>,
     pub proxy_config: Arc<Mutex<Option<crate::core::proxy_config::ProxyConfig>>>,
+    // API 网关（复用 8766，/gateway 前缀）
+    pub gateway_config: Arc<Mutex<GatewayConfig>>,
+    pub gateway_usage: Arc<GatewayUsageStore>,
+    /// 网关会话粘性（sticky session）映射
+    pub gateway_affinity: Arc<SessionAffinity>,
+    /// 网关流式上游客户端缓存：构建一次后复用，避免每请求重建客户端与重复 TLS 握手
+    pub gateway_stream_client: Arc<Mutex<Option<crate::core::proxy_helper::ProxyClient>>>,
     /// Outlook OAuth: CSRF state + PKCE code_verifier (see RFC 7636)
     pub outlook_oauth_pending: Mutex<Option<outlook::OutlookOAuthPending>>,
+}
+
+impl AppState {
+    /// 取网关流式上游客户端：首次按当前代理配置构建并缓存，后续请求直接复用以保持连接池
+    pub fn gateway_http_client(&self) -> Result<crate::core::proxy_helper::ProxyClient, String> {
+        let mut guard = self
+            .gateway_stream_client
+            .lock()
+            .map_err(|_| "网关客户端缓存锁中毒".to_string())?;
+        if let Some(client) = guard.as_ref() {
+            return Ok(client.clone());
+        }
+        let client = crate::core::http_client::create_proxy_client_for_streaming()?;
+        *guard = Some(client.clone());
+        Ok(client)
+    }
+
+    /// 失效网关客户端缓存（代理配置变更后调用），下次请求按新配置重建
+    pub fn invalidate_gateway_http_client(&self) {
+        if let Ok(mut guard) = self.gateway_stream_client.lock() {
+            *guard = None;
+        }
+    }
 }
 
 pub fn run() {
@@ -181,6 +218,12 @@ pub fn run() {
                 codex_server_config: Arc::new(Mutex::new(None)),
                 codex_log_storage: Arc::new(Mutex::new(None)),
                 proxy_config: Arc::new(Mutex::new(None)),
+                gateway_config: Arc::new(Mutex::new(GatewayConfig::load(&app_data_dir))),
+                gateway_usage: Arc::new(GatewayUsageStore::load(
+                    app_data_dir.join("gateway_usage.db"),
+                )),
+                gateway_affinity: Arc::new(SessionAffinity::new()),
+                gateway_stream_client: Arc::new(Mutex::new(None)),
                 outlook_oauth_pending: Mutex::new(None),
             };
 
@@ -448,6 +491,10 @@ pub fn run() {
                         codex_server_config: state.codex_server_config.clone(),
                         codex_log_storage: state.codex_log_storage.clone(),
                         proxy_config: state.proxy_config.clone(),
+                        gateway_config: state.gateway_config.clone(),
+                        gateway_usage: state.gateway_usage.clone(),
+                        gateway_affinity: state.gateway_affinity.clone(),
+                        gateway_stream_client: state.gateway_stream_client.clone(),
                         outlook_oauth_pending: Mutex::new(None),
                     }),
                     8766,
@@ -600,6 +647,7 @@ pub fn run() {
             openai::openai_get_current_account_id,
             openai::openai_set_current_account_id,
             openai::openai_fetch_quota,
+            openai::openai_consume_reset_credit,
             openai::openai_refresh_all_quotas,
             openai::openai_refresh_account_token,
             openai::openai_refresh_all_tokens,
@@ -764,6 +812,7 @@ pub fn run() {
             storage::claude::claude_sync_accounts_from_database,
             storage::claude::claude_bidirectional_sync_accounts,
             storage::claude::claude_switch_account,
+            storage::claude::claude_switch_gateway,
             storage::claude::claude_get_current_account_id,
 
             // API 服务器管理命令
@@ -882,7 +931,24 @@ pub fn run() {
 
             // 订阅监控命令
             subscription_monitor::check_subscriptions_expiry,
-            subscription_monitor::get_expiring_subscriptions
+            subscription_monitor::get_expiring_subscriptions,
+
+            // 网关模型库命令
+            crate::core::gateway_models::gateway_sync_models,
+            crate::core::gateway_models::gateway_get_models,
+            crate::core::gateway_custom_models::gateway_get_custom_models,
+            crate::core::gateway_custom_models::gateway_set_custom_models,
+            crate::core::gateway_channel::gateway_fetch_channel_models,
+            crate::core::gateway_channel::gateway_test_channel,
+            // 网关核心命令
+            crate::core::gateway::commands::gateway_get_config,
+            crate::core::gateway::commands::gateway_set_config,
+            crate::core::gateway::commands::gateway_get_status,
+            crate::core::gateway::commands::gateway_start,
+            crate::core::gateway::commands::gateway_stop,
+            crate::core::gateway::commands::gateway_list_usage,
+            crate::core::gateway::commands::gateway_clear_usage,
+            crate::core::gateway::commands::gateway_list_bindable_accounts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -193,6 +193,34 @@ pub async fn openai_fetch_quota(app: AppHandle, account_id: String) -> Result<Ac
     Ok(updated_acc)
 }
 
+/// 消费一张限流重置券并刷新配额，返回更新后的完整账户数据
+#[tauri::command]
+pub async fn openai_consume_reset_credit(
+    app: AppHandle,
+    account_id: String,
+) -> Result<Account, String> {
+    let mut acc = storage::load_account(&app, &account_id).await?;
+
+    if acc.account_type == crate::platforms::openai::models::account::AccountType::API {
+        return Err("API accounts do not support reset credits".to_string());
+    }
+
+    match account_module::consume_reset_credit(&mut acc).await {
+        Ok(_) => {}
+        Err(e) => {
+            // 保存状态变更（token 更新、rt_invalid 等）后返回错误
+            let _ = storage::save_account(&app, &acc).await;
+            return Err(e);
+        }
+    }
+
+    account_module::backfill_openai_auth_json_if_missing(&mut acc);
+    storage::save_account(&app, &acc).await?;
+
+    let updated_acc = storage::load_account(&app, &account_id).await?;
+    Ok(updated_acc)
+}
+
 #[derive(serde::Serialize)]
 pub struct RefreshStats {
     total: usize,

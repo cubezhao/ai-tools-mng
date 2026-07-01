@@ -127,6 +127,28 @@ fn missing_subscription_expiry(account: &Account) -> bool {
         .unwrap_or(true)
 }
 
+/// 消费一张限流重置券后刷新配额（token 续期、consume、重新拉取配额）。
+/// 调用方负责保存账号。
+pub async fn consume_reset_credit(account: &mut Account) -> Result<QuotaData, String> {
+    if account.account_type == AccountType::API {
+        return Err("API accounts do not support reset credits".to_string());
+    }
+
+    // 消费前尽量拿到有效 token（失败则用现有 token 继续尝试）
+    let _ = refresh_token_if_needed(account, 0, true).await;
+
+    let access_token = account
+        .token
+        .as_ref()
+        .map(|t| t.access_token.clone())
+        .ok_or_else(|| "OAuth account missing token".to_string())?;
+
+    quota::consume_reset_credit(&access_token, account.chatgpt_account_id.as_deref()).await?;
+
+    // 消费成功后重新拉取配额，反映重置后的窗口与剩余重置券
+    refresh_quota_and_backfill(account).await
+}
+
 pub async fn refresh_token_if_needed(
     account: &mut Account,
     refresh_window_secs: i64,

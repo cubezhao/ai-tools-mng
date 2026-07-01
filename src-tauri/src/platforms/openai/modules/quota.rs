@@ -2,9 +2,15 @@ use base64::{Engine as _, engine::general_purpose};
 use serde_json::Value;
 
 use crate::http_client::create_proxy_client;
-use crate::platforms::openai::models::{QuotaData, WhamUsageResponse};
+use crate::platforms::openai::models::{
+    CodexResetConsumeResponse, CodexResetCreditsResponse, QuotaData, WhamUsageResponse,
+};
 
 const CHATGPT_WHAM_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
+const CHATGPT_RESET_CREDITS_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits";
+const CHATGPT_RESET_CREDITS_CONSUME_URL: &str =
+    "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume";
 
 /// Fetch OpenAI quota from ChatGPT wham usage API.
 pub async fn fetch_quota(
@@ -61,10 +67,17 @@ pub async fn fetch_quota(
                 if status.is_success() {
                     match serde_json::from_str::<WhamUsageResponse>(&body) {
                         Ok(wham) => {
-                            let quota = QuotaData::from_wham_usage(&wham);
+                            let mut quota = QuotaData::from_wham_usage(&wham);
                             println!("Successfully parsed quota from wham response");
                             println!("  5h used: {:?}%", quota.codex_5h_used_percent);
                             println!("  7d used: {:?}%", quota.codex_7d_used_percent);
+                            // 旁路拉取限流重置券（尽力而为，失败不影响配额结果）
+                            attach_reset_credits(
+                                &mut quota,
+                                access_token,
+                                resolved_account_id.as_deref(),
+                            )
+                            .await;
                             return Ok(quota);
                         }
                         Err(e) => {
@@ -96,6 +109,111 @@ pub async fn fetch_quota(
     let final_error = last_error.unwrap_or_else(|| "Quota fetch failed after retries".to_string());
     println!("Quota fetch failed: {}", final_error);
     Err(final_error)
+}
+
+/// 拉取限流重置券列表（`GET /wham/rate-limit-reset-credits`）
+pub async fn fetch_reset_credits(
+    access_token: &str,
+    chatgpt_account_id: Option<&str>,
+) -> Result<CodexResetCreditsResponse, String> {
+    let client = create_proxy_client()?;
+    let mut builder = client
+        .get(CHATGPT_RESET_CREDITS_URL)
+        .header("authorization", format!("Bearer {}", access_token))
+        .header("accept", "application/json");
+    if let Some(account_id) = resolve_chatgpt_account_id(chatgpt_account_id, access_token).as_deref()
+    {
+        builder = builder.header("chatgpt-account-id", account_id);
+    }
+
+    let response = builder
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format_http_error(status, &body));
+    }
+    serde_json::from_str::<CodexResetCreditsResponse>(&body).map_err(|e| {
+        format!(
+            "Failed to parse reset-credits response: {}; body: {}",
+            e,
+            truncate_for_error(&body)
+        )
+    })
+}
+
+/// 消费一张可用的限流重置券（`POST /wham/rate-limit-reset-credits/consume`）
+pub async fn consume_reset_credit(
+    access_token: &str,
+    chatgpt_account_id: Option<&str>,
+) -> Result<CodexResetConsumeResponse, String> {
+    let list = fetch_reset_credits(access_token, chatgpt_account_id).await?;
+    let credit_id = list
+        .credits
+        .iter()
+        .find(|c| c.status.as_deref() == Some("available"))
+        .and_then(|c| c.id.clone())
+        .ok_or_else(|| "no available reset credit".to_string())?;
+
+    let client = create_proxy_client()?;
+    let mut builder = client
+        .post(CHATGPT_RESET_CREDITS_CONSUME_URL)
+        .header("authorization", format!("Bearer {}", access_token))
+        .header("accept", "application/json")
+        .header("content-type", "application/json");
+    if let Some(account_id) = resolve_chatgpt_account_id(chatgpt_account_id, access_token).as_deref()
+    {
+        builder = builder.header("chatgpt-account-id", account_id);
+    }
+
+    let payload = serde_json::json!({
+        "credit_id": credit_id,
+        "redeem_request_id": uuid::Uuid::new_v4().to_string(),
+    });
+
+    let response = builder
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format_http_error(status, &body));
+    }
+    serde_json::from_str::<CodexResetConsumeResponse>(&body).map_err(|e| {
+        format!(
+            "Failed to parse reset-credits consume response: {}; body: {}",
+            e,
+            truncate_for_error(&body)
+        )
+    })
+}
+
+/// 尽力而为地把重置券可用/总数写入 quota（失败静默）
+async fn attach_reset_credits(
+    quota: &mut QuotaData,
+    access_token: &str,
+    chatgpt_account_id: Option<&str>,
+) {
+    match fetch_reset_credits(access_token, chatgpt_account_id).await {
+        Ok(resp) => {
+            let total = resp.credits.len() as i64;
+            let available = resp.available_count.unwrap_or_else(|| {
+                resp.credits
+                    .iter()
+                    .filter(|c| c.status.as_deref() == Some("available"))
+                    .count() as i64
+            });
+            quota.reset_credits_total = Some(total);
+            quota.reset_credits_available = Some(available);
+        }
+        Err(e) => {
+            println!("Fetch reset credits failed (ignored): {}", e);
+        }
+    }
 }
 
 fn resolve_chatgpt_account_id(

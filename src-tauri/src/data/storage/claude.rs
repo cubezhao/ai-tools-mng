@@ -386,3 +386,68 @@ pub async fn claude_get_current_account_id(
 
     Ok(current_account.map(|a| a.id.clone()))
 }
+
+/// 将 Claude Code 直接切换到网关端点
+/// 把网关 base_url / api_key 及 Opus/Sonnet/Haiku 三档模型写入 ~/.claude/settings.json（不依赖已存账号）
+#[tauri::command]
+pub async fn claude_switch_gateway(
+    app: tauri::AppHandle,
+    base_url: String,
+    api_key: String,
+    opus_model: String,
+    sonnet_model: String,
+    haiku_model: String,
+) -> Result<(), String> {
+    let opus = opus_model.trim();
+    let sonnet = sonnet_model.trim();
+    let haiku = haiku_model.trim();
+
+    let mut env = serde_json::json!({
+        "ANTHROPIC_AUTH_TOKEN": api_key,
+        "ANTHROPIC_BASE_URL": base_url,
+        "API_TIMEOUT_MS": "3000000",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+    });
+    // 分档指定模型时写入对应默认模型，使各档请求经网关路由
+    if !opus.is_empty() {
+        env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = serde_json::json!(opus);
+    }
+    if !sonnet.is_empty() {
+        env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = serde_json::json!(sonnet);
+    }
+    if !haiku.is_empty() {
+        env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = serde_json::json!(haiku);
+    }
+
+    let settings_json = serde_json::json!({ "env": env });
+
+    let content = serde_json::to_string_pretty(&settings_json)
+        .map_err(|e| format!("Failed to serialize settings.json: {}", e))?;
+
+    let home_dir = app
+        .path()
+        .home_dir()
+        .map_err(|e| format!("Failed to get home directory: {}", e))?;
+
+    let claude_dir = home_dir.join(".claude");
+    let settings_file = claude_dir.join("settings.json");
+
+    std::fs::create_dir_all(&claude_dir)
+        .map_err(|e| format!("Failed to create .claude directory: {}", e))?;
+
+    if settings_file.exists() {
+        std::fs::remove_file(&settings_file)
+            .map_err(|e| format!("Failed to remove old settings.json: {}", e))?;
+    }
+
+    std::fs::write(&settings_file, content)
+        .map_err(|e| format!("Failed to write settings.json: {}", e))?;
+
+    println!(
+        "Claude switched to gateway: {} -> {}",
+        base_url,
+        settings_file.display()
+    );
+
+    Ok(())
+}

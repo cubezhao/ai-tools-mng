@@ -32,6 +32,7 @@ impl ProxyHelper {
 }
 
 /// HTTP 客户端包装器，自动处理 Edge Function 代理
+#[derive(Clone)]
 pub struct ProxyClient {
     client: Client,
     edge_function_url: Option<String>,

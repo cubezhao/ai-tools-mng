@@ -72,6 +72,8 @@ impl AccountDbMapper<Account> for OpenAIAccountMapper {
                 codex_primary_over_secondary_percent: row.try_get(24).ok().flatten(),
                 codex_usage_updated_at: row.try_get(25).unwrap_or(chrono::Utc::now().timestamp()),
                 is_forbidden,
+                reset_credits_available: None,
+                reset_credits_total: None,
             };
             if quota_data.is_valid() || is_forbidden {
                 Some(quota_data)

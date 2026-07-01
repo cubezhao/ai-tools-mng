@@ -7,10 +7,14 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use bytes::Bytes;
-use reqwest::{Method, RequestBuilder, StatusCode};
+use reqwest::Method;
 use warp::http::HeaderMap;
 
 use super::pool::CodexPool;
+use super::upstream::{
+    apply_forward_headers, build_upstream_url, format_transport_error, is_retryable_transport_error,
+    map_upstream_path, should_retry_status, CODEX_UPSTREAM_ORIGIN,
+};
 use crate::http_client::create_proxy_client_for_streaming;
 use crate::platforms::openai::codex::models::{CodexError, CodexPoolAccount};
 use crate::proxy_helper::ProxyClient;
@@ -51,7 +55,7 @@ impl CodexExecutor {
         Ok(Self {
             pool,
             client,
-            upstream_origin: "https://chatgpt.com".to_string(),
+            upstream_origin: CODEX_UPSTREAM_ORIGIN.to_string(),
         })
     }
 
@@ -137,121 +141,13 @@ impl CodexExecutor {
         account: &CodexPoolAccount,
     ) -> Result<reqwest::Response, reqwest::Error> {
         let builder = self.client.request(request.method.clone(), url);
-        let builder = apply_forward_headers(builder, &request.headers, account);
+        let builder = apply_forward_headers(
+            builder,
+            &request.headers,
+            &account.access_token,
+            &account.chatgpt_account_id,
+        );
 
         builder.body(request.body.clone()).send().await
     }
-}
-
-fn map_upstream_path(path: &str) -> Result<String, CodexError> {
-    if path == "/v1" {
-        return Ok("/backend-api/codex".to_string());
-    }
-
-    if let Some(tail) = path.strip_prefix("/v1/") {
-        return Ok(format!("/backend-api/codex/{}", tail));
-    }
-
-    if path == "/backend-api/codex" || path.starts_with("/backend-api/codex/") {
-        return Ok(path.to_string());
-    }
-
-    Err(CodexError::InvalidRequest(format!(
-        "Unsupported Codex path: {}",
-        path
-    )))
-}
-
-fn build_upstream_url(origin: &str, path: &str, raw_query: Option<&str>) -> String {
-    let mut url = format!("{}{}", origin, path);
-    if let Some(query) = raw_query.map(str::trim).filter(|q| !q.is_empty()) {
-        url.push('?');
-        url.push_str(query);
-    }
-    url
-}
-
-fn apply_forward_headers(
-    mut builder: RequestBuilder,
-    headers: &HeaderMap,
-    account: &CodexPoolAccount,
-) -> RequestBuilder {
-    let mut has_user_agent = false;
-    let mut has_openai_beta = false;
-    let mut has_originator = false;
-
-    for (name, value) in headers.iter() {
-        if should_strip_request_header(name.as_str()) {
-            continue;
-        }
-
-        if name.as_str().eq_ignore_ascii_case("user-agent") {
-            has_user_agent = true;
-        }
-        if name.as_str().eq_ignore_ascii_case("openai-beta") {
-            has_openai_beta = true;
-        }
-        if name.as_str().eq_ignore_ascii_case("originator") {
-            has_originator = true;
-        }
-
-        builder = builder.header(name, value.clone());
-    }
-
-    builder = builder
-        .header("Authorization", format!("Bearer {}", account.access_token))
-        .header("chatgpt-account-id", account.chatgpt_account_id.clone());
-
-    if !has_user_agent {
-        builder = builder.header("User-Agent", "codex_cli_rs/0.98.0");
-    }
-    if !has_openai_beta {
-        builder = builder.header("OpenAI-Beta", "responses=experimental");
-    }
-    if !has_originator {
-        builder = builder.header("originator", "codex_cli_rs");
-    }
-
-    builder
-}
-
-fn should_strip_request_header(header_name: &str) -> bool {
-    matches!(
-        header_name.to_ascii_lowercase().as_str(),
-        "host"
-            | "content-length"
-            | "connection"
-            | "keep-alive"
-            | "proxy-authenticate"
-            | "proxy-authorization"
-            | "te"
-            | "trailer"
-            | "transfer-encoding"
-            | "upgrade"
-            | "authorization"
-            | "x-api-key"
-            | "chatgpt-account-id"
-    )
-}
-
-fn should_retry_status(status: StatusCode) -> bool {
-    matches!(
-        status.as_u16(),
-        401 | 403 | 408 | 429 | 500 | 502 | 503 | 504
-    )
-}
-
-fn is_retryable_transport_error(err: &reqwest::Error) -> bool {
-    err.is_timeout() || err.is_connect()
-}
-
-fn format_transport_error(err: &reqwest::Error) -> String {
-    if err.is_timeout() || err.is_connect() {
-        return format!(
-            "Request failed: {}. Upstream connection timed out; check proxy settings and network reachability.",
-            err
-        );
-    }
-
-    format!("Request failed: {}", err)
 }

@@ -274,6 +274,31 @@
         </div>
       </div>
 
+      <!-- 重置额度 (仅 OAuth 账号，账号存在重置券时展示) -->
+      <div v-if="showResetCredits" class="flex items-center gap-1 min-h-6">
+        <div class="flex items-center gap-1.5 w-[90px] shrink-0 text-text-muted text-xs">
+          <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 6v3l4-4-4-4v3c-4.42 0-8 3.58-8 8 0 1.57.46 3.03 1.24 4.26L6.7 14.8c-.45-.83-.7-1.79-.7-2.8 0-3.31 2.69-6 6-6zm6.76 1.74L17.3 9.2c.44.84.7 1.79.7 2.8 0 3.31-2.69 6-6 6v-3l-4 4 4 4v-3c4.42 0 8-3.58 8-8 0-1.57-.46-3.03-1.24-4.26z"/>
+          </svg>
+          <span>{{ $t('platform.openai.resetCredits') }}</span>
+        </div>
+        <div class="flex-1 flex items-center gap-2 text-[13px]">
+          <span class="tabular-nums text-text">
+            {{ resetCreditsAvailable }}<span class="text-text-muted"> / {{ resetCreditsTotal }}</span>
+          </span>
+          <button
+            v-if="resetCreditsAvailable > 0"
+            @click.stop="$emit('reset-credits', account.id)"
+            :disabled="isResetting"
+            class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-border text-xs text-accent cursor-pointer hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50 transition-colors"
+            v-tooltip="$t('platform.openai.resetCreditsTooltip')"
+          >
+            <span v-if="isResetting" class="btn-spinner btn-spinner--sm text-accent"></span>
+            <span>{{ $t('platform.openai.useResetCredit') }}</span>
+          </button>
+        </div>
+      </div>
+
       <!-- API 配置信息 (仅 API 账号) -->
       <template v-if="isApiAccount && account.api_config">
         <!-- Model -->
@@ -387,6 +412,10 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
+  isResetting: {
+    type: Boolean,
+    default: false
+  },
   isDeleting: {
     type: Boolean,
     default: false
@@ -409,7 +438,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['refresh-quota', 'delete', 'select', 'switch', 'account-updated', 'edit', 'copy-third-party-credentials'])
+const emit = defineEmits(['refresh-quota', 'reset-credits', 'delete', 'select', 'switch', 'account-updated', 'edit', 'copy-third-party-credentials'])
 
 const menuRef = ref(null)
 const showTagEditor = ref(false)
@@ -478,6 +507,16 @@ const authInfo = computed(() => {
     return null
   }
 })
+
+// 重置额度（限流重置券）
+const resetCreditsAvailable = computed(() => props.account.quota?.codex_reset_credits_available ?? 0)
+const resetCreditsTotal = computed(() => props.account.quota?.codex_reset_credits_total ?? 0)
+const showResetCredits = computed(() =>
+  !isApiAccount.value &&
+  !props.account.quota?.is_forbidden &&
+  !props.account.rt_invalid &&
+  resetCreditsTotal.value > 0
+)
 
 // 配额相关
 const getQuotaBarClass = (percent) => {

@@ -51,6 +51,46 @@ pub struct QuotaData {
 
     #[serde(default)]
     pub is_forbidden: bool,
+
+    /// 可用重置额度（rate-limit-reset-credits 中 status=available 的数量）
+    #[serde(
+        rename = "codex_reset_credits_available",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reset_credits_available: Option<i64>,
+
+    /// 重置额度总数（已授予的重置券总量，用于展示已消费 = 总数 - 可用）
+    #[serde(
+        rename = "codex_reset_credits_total",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reset_credits_total: Option<i64>,
+}
+
+/// `GET /wham/rate-limit-reset-credits` 响应：限流重置券列表
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodexResetCreditsResponse {
+    #[serde(default)]
+    pub credits: Vec<CodexResetCredit>,
+    #[serde(default)]
+    pub available_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodexResetCredit {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+/// `POST /wham/rate-limit-reset-credits/consume` 响应
+#[derive(Debug, Clone, Deserialize)]
+pub struct CodexResetConsumeResponse {
+    #[serde(default)]
+    pub code: Option<String>,
+    #[serde(default)]
+    pub windows_reset: Option<i64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -91,6 +131,8 @@ impl QuotaData {
             codex_primary_over_secondary_percent: None,
             codex_usage_updated_at: Utc::now().timestamp(),
             is_forbidden: false,
+            reset_credits_available: None,
+            reset_credits_total: None,
         }
     }
 

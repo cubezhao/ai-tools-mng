@@ -42,11 +42,6 @@
               <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
             </svg>
           </button>
-          <button @click="showImportDialog = true" class="btn btn--icon btn--ghost" v-tooltip="$t('platform.openai.importAccounts')">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM14 13v4h-4v-4H7l5-5 5 5h-3z"/>
-            </svg>
-          </button>
           <button
             v-if="isDatabaseAvailable"
             class="btn btn--icon btn--ghost"
@@ -113,6 +108,7 @@
             :is-current="account.id === currentAccountId"
             :is-switching="switchingAccountId === account.id"
             :is-refreshing="refreshingIds.has(account.id)"
+            :is-resetting="resettingIds.has(account.id)"
             :is-deleting="deletingIds.has(account.id)"
             :is-selected="selectedAccountIds.has(account.id)"
             :selection-mode="isSelectionMode"
@@ -120,6 +116,7 @@
             :all-accounts="accounts"
             @switch="handleSwitch"
             @refresh-quota="handleRefreshQuota"
+            @reset-credits="handleResetCredits"
             @delete="handleDelete"
             @select="toggleAccountSelection"
             @account-updated="handleAccountUpdated"
@@ -573,10 +570,12 @@
     />
 
     <!-- Add Account Dialog -->
-    <AddAccountDialog v-if="showAddDialog" @close="showAddDialog = false" @added="handleAccountAdded" />
-
-    <!-- Import Accounts Dialog -->
-    <OpenAIImportAccountsDialog v-if="showImportDialog" @close="showImportDialog = false" @imported="handleAccountsImported" />
+    <AddAccountDialog
+      v-if="showAddDialog"
+      @close="showAddDialog = false"
+      @added="handleAccountAdded"
+      @imported="handleAccountsImported"
+    />
 
     <!-- Edit API Account Dialog -->
     <EditApiAccountDialog
@@ -628,7 +627,6 @@ import { useI18n } from 'vue-i18n'
 import AccountCard from '../openai/AccountCard.vue'
 import AccountTableRow from '../openai/AccountTableRow.vue'
 import AddAccountDialog from '../openai/AddAccountDialog.vue'
-import OpenAIImportAccountsDialog from '../openai/OpenAIImportAccountsDialog.vue'
 import EditApiAccountDialog from '../openai/EditApiAccountDialog.vue'
 import OpenAIThirdPartyCredentialModal from '../openai/OpenAIThirdPartyCredentialModal.vue'
 import CodexServerDialog from '../openai/CodexServerDialog.vue'
@@ -660,13 +658,13 @@ const props = defineProps({
 const accounts = ref([])
 const currentAccountId = ref(null)
 const showAddDialog = ref(false)
-const showImportDialog = ref(false)
 const showCodexDialog = ref(false)
 const showCodexSettingsModal = ref(false)
 const editingAccount = ref(null)
 const thirdPartyCredentialAccount = ref(null)
 const isLoading = ref(false)
 const refreshingIds = ref(new Set())
+const resettingIds = ref(new Set())
 const deletingIds = ref(new Set())
 const switchingAccountId = ref(null)
 
@@ -1064,6 +1062,32 @@ const handleRefreshQuota = async (accountId) => {
   }
 }
 
+// 消费一张限流重置券并刷新配额
+const handleResetCredits = async (accountId) => {
+  resettingIds.value.add(accountId)
+  try {
+    const updatedAccount = await invoke('openai_consume_reset_credit', { accountId })
+    const index = accounts.value.findIndex(a => a.id === accountId)
+    if (index !== -1) {
+      accounts.value[index] = updatedAccount
+    }
+    markItemUpsertById(accountId)
+    window.$notify?.success($t('platform.openai.messages.resetCreditSuccess'))
+  } catch (error) {
+    console.error('Failed to consume reset credit:', error)
+    try {
+      const reloaded = await invoke('openai_load_account', { accountId })
+      const index = accounts.value.findIndex(a => a.id === accountId)
+      if (index !== -1) {
+        accounts.value[index] = reloaded
+      }
+    } catch {}
+    window.$notify?.error($t('platform.openai.messages.resetCreditFailed', { error: error?.message || error }))
+  } finally {
+    resettingIds.value.delete(accountId)
+  }
+}
+
 // 刷新当前页所有配额（并行，仅 OAuth 账号，排除禁用账号）
 const handleRefreshCurrentPageQuota = async () => {
   isRefreshingAll.value = true
@@ -1128,7 +1152,7 @@ const handleAccountAdded = async (account) => {
 }
 
 const handleAccountsImported = async (result) => {
-  showImportDialog.value = false
+  showAddDialog.value = false
   await loadAccounts()
   refreshCodexPoolQuietly()
   if (result?.success_count > 0) {
