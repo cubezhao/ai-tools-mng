@@ -172,10 +172,11 @@ pub async fn openai_fetch_quota(app: AppHandle, account_id: String) -> Result<Ac
         return Err("API accounts do not support quota fetching".to_string());
     }
 
-    match account_module::fetch_quota_with_retry(&mut acc).await {
-        Ok(quota) => {
-            println!("Fetched quota: {:?}", quota);
-            acc.update_quota(quota);
+    // 使用 refresh_quota_and_backfill 统一刷新配额和订阅信息，
+    // 当本地存储的到期日过期时，会自动通过 accounts/check API 更新。
+    match account_module::refresh_quota_and_backfill(&mut acc).await {
+        Ok(_) => {
+            println!("Fetched quota and refreshed account info");
         }
         Err(e) => {
             println!("Quota fetch failed: {}", e);
@@ -185,7 +186,6 @@ pub async fn openai_fetch_quota(app: AppHandle, account_id: String) -> Result<Ac
         }
     }
 
-    account_module::backfill_openai_auth_json_if_missing(&mut acc);
     storage::save_account(&app, &acc).await?;
     println!("Updated account quota");
 
@@ -305,6 +305,27 @@ pub async fn openai_refresh_account_token(
         account_module::refresh_token_if_needed(&mut account, window_secs, force).await?;
     if refreshed {
         account_module::backfill_openai_auth_json_if_missing(&mut account);
+    }
+
+    // 无论 token 是否刷新，都要检查订阅信息是否过期。
+    // JWT 中的到期日可能是上个账单周期的快照，需要实际调用 API 获取真实数据。
+    if account_module::missing_subscription_expiry(&account) {
+        if let Some(access_token) = account
+            .token
+            .as_ref()
+            .map(|token| token.access_token.clone())
+        {
+            crate::platforms::openai::modules::oauth::enrich_openai_auth_json_with_account_check(
+                &access_token,
+                account.organization_id.as_deref(),
+                account.chatgpt_account_id.as_deref(),
+                &mut account.openai_auth_json,
+            )
+            .await;
+        }
+    }
+
+    if refreshed {
         storage::save_account(&app, &account).await?;
     }
 
