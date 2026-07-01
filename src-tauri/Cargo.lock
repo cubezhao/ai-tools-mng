@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "atm"
-version = "1.9.22"
+version = "2.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
