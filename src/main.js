@@ -24,12 +24,14 @@ const getStoredTheme = () => {
   }
 }
 
+const resolveSystemTheme = () => (prefersDarkMedia.matches ? "dark" : "light")
+
 const resolveInitialTheme = () => {
   const stored = getStoredTheme()
   if (stored === "dark" || stored === "light") {
     return stored
   }
-  return prefersDarkMedia.matches ? "dark" : "light"
+  return resolveSystemTheme()
 }
 
 const initialTheme = resolveInitialTheme()
@@ -40,6 +42,7 @@ const themeManager = {
   mediaQuery: prefersDarkMedia,
   applyTheme,
   getStoredTheme,
+  resolveSystemTheme,
   initialTheme
 }
 

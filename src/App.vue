@@ -152,9 +152,15 @@
                 isSidebarCollapsed ? 'justify-center px-2 py-2.5' : 'justify-start px-3 py-2.5',
               ]"
               @click="toggleTheme"
-              :aria-pressed="isDarkTheme" :aria-label="themeToggleLabel" v-tooltip="themeToggleLabel">
-              <svg v-if="isDarkTheme" class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              :aria-label="themeToggleLabel" v-tooltip="themeToggleLabel">
+              <svg v-if="themePreference === 'system'" class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" />
+                <path d="M8 21h8" />
+                <path d="M12 17v4" />
+              </svg>
+              <svg v-else-if="themePreference === 'dark'" class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
               </svg>
               <svg v-else class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -169,7 +175,7 @@
                 <path d="m4.22 19.78 1.42-1.42" />
                 <path d="m18.36 5.64 1.42-1.42" />
               </svg>
-              <span v-if="!isSidebarCollapsed" class="flex-1 min-w-0 truncate">{{ isDarkTheme ? $t('app.lightMode') : $t('app.darkMode') }}</span>
+              <span v-if="!isSidebarCollapsed" class="flex-1 min-w-0 truncate">{{ themeModeLabel }}</span>
             </button>
 
             <!-- Language Toggle -->
@@ -410,7 +416,17 @@ try {
   console.warn('Failed to read stored theme preference inside App.vue', error)
 }
 
-const hasManualThemePreference = ref(storedThemePreference === 'dark' || storedThemePreference === 'light')
+const resolveSystemTheme = () => {
+  if (themeManager?.resolveSystemTheme) {
+    return themeManager.resolveSystemTheme()
+  }
+  return themeManager?.mediaQuery?.matches ? 'dark' : 'light'
+}
+
+const THEME_PREFERENCES = ['light', 'dark', 'system']
+const themePreference = ref(
+  THEME_PREFERENCES.includes(storedThemePreference) ? storedThemePreference : 'system'
+)
 const currentTheme = ref(themeManager?.initialTheme ?? document.documentElement.dataset.theme ?? 'light')
 const isDarkTheme = computed(() => currentTheme.value === 'dark')
 
@@ -421,8 +437,9 @@ const fallbackApplyTheme = (theme) => {
   root.style.colorScheme = normalized
 }
 
-const setTheme = (nextTheme, options = {}) => {
-  const normalized = nextTheme === 'dark' ? 'dark' : 'light'
+const applyResolvedTheme = () => {
+  const resolved = themePreference.value === 'system' ? resolveSystemTheme() : themePreference.value
+  const normalized = resolved === 'dark' ? 'dark' : 'light'
   currentTheme.value = normalized
 
   if (themeManager?.applyTheme) {
@@ -430,34 +447,39 @@ const setTheme = (nextTheme, options = {}) => {
   } else {
     fallbackApplyTheme(normalized)
   }
+}
 
-  if (options.persist === false) {
-    return
-  }
+const setThemePreference = (preference) => {
+  themePreference.value = THEME_PREFERENCES.includes(preference) ? preference : 'system'
+  applyResolvedTheme()
 
   try {
-    localStorage.setItem(themeStorageKey, normalized)
-    hasManualThemePreference.value = true
+    localStorage.setItem(themeStorageKey, themePreference.value)
   } catch (error) {
     console.warn('Failed to persist theme preference', error)
   }
 }
 
 const toggleTheme = () => {
-  setTheme(isDarkTheme.value ? 'light' : 'dark')
+  const nextIndex = (THEME_PREFERENCES.indexOf(themePreference.value) + 1) % THEME_PREFERENCES.length
+  setThemePreference(THEME_PREFERENCES[nextIndex])
 }
 
-const themeToggleLabel = computed(() => (isDarkTheme.value ? t('app.switchToLight') : t('app.switchToDark')))
+const themeModeLabel = computed(() => {
+  if (themePreference.value === 'system') return t('app.systemMode')
+  return themePreference.value === 'dark' ? t('app.darkMode') : t('app.lightMode')
+})
+const themeToggleLabel = computed(() => t('app.switchThemeHint', { mode: themeModeLabel.value }))
 
 let cleanupSystemThemeListener
 
 if (themeManager?.mediaQuery) {
   const mediaQuery = themeManager.mediaQuery
-  const handleSystemThemeChange = (event) => {
-    if (hasManualThemePreference.value) {
+  const handleSystemThemeChange = () => {
+    if (themePreference.value !== 'system') {
       return
     }
-    setTheme(event.matches ? 'dark' : 'light', { persist: false })
+    applyResolvedTheme()
   }
 
   if (typeof mediaQuery.addEventListener === 'function') {
@@ -470,7 +492,7 @@ if (themeManager?.mediaQuery) {
 }
 
 onMounted(() => {
-  setTheme(currentTheme.value, { persist: hasManualThemePreference.value })
+  applyResolvedTheme()
 })
 
 // Update check
