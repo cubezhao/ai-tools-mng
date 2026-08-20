@@ -159,4 +159,4 @@ cargo tauri build    # 构建生产版本
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=cubezhao/ai-tools-mng&type=Date)](https://star-history.com/#cubezhao/ai-tools-mng&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=cubezhao/ai-tools-mng&type=Date)](https://star-history.dera.page/#cubezhao/ai-tools-mng&Date)
