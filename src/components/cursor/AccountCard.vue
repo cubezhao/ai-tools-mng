@@ -170,6 +170,27 @@
         </div>
       </div>
 
+      <!-- 套餐剩余（官方账单口径） -->
+      <div v-if="showPlanQuota && hasSessionToken" class="flex items-center gap-1 min-h-6">
+        <div class="flex items-center gap-1.5 w-[90px] shrink-0 text-text-muted text-xs">
+          <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V5h14v14zM7 12h2v5H7zm4-3h2v8h-2zm4-3h2v11h-2z"/>
+          </svg>
+          <span v-tooltip="planHint">{{ $t('platform.cursor.planAvailable') }}</span>
+        </div>
+        <div class="flex-1 flex items-center gap-1">
+          <div class="flex-1 h-1.5 bg-muted rounded overflow-hidden">
+            <div class="h-full rounded transition-all"
+                 :class="getQuotaBarClass(planRemainingPercent)"
+                 :style="{ width: planRemainingPercent + '%' }">
+            </div>
+          </div>
+          <span class="text-[11px] font-medium tabular-nums text-text-muted w-8 text-right">
+            {{ planRemainingPercent }}%
+          </span>
+        </div>
+      </div>
+
       <!-- Auto 剩余 -->
       <div v-if="autoRemainingPercent !== null && hasSessionToken" class="flex items-center gap-1 min-h-6">
         <div class="flex items-center gap-1.5 w-[90px] shrink-0 text-text-muted text-xs">
@@ -352,6 +373,9 @@ const getMembershipBadgeClass = (type) => {
 const hasSessionToken = computed(() => !!props.account.token?.workos_cursor_session_token)
 
 const {
+  planRemainingPercent,
+  planSpend,
+  showPlanQuota,
   autoRemainingPercent,
   apiRemainingPercent,
   grokBotRemaining,
@@ -359,6 +383,11 @@ const {
   grokBotResetLabel,
   getQuotaBarClass
 } = useCursorQuota(() => props.account)
+
+const planHint = computed(() => {
+  const base = $t('platform.cursor.planAvailableHint')
+  return planSpend.value ? `${base} · ${planSpend.value}` : base
+})
 
 const grokBotHint = computed(() => {
   const base = $t('platform.cursor.grokBotAvailableHint')

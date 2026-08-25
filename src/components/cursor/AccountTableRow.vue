@@ -64,7 +64,17 @@
 
     <!-- 可用额度 -->
     <td class="w-[150px] px-2.5 py-3.5 border-b border-border/50 align-top whitespace-nowrap text-[12px] text-text-muted">
-      <div v-if="hasSessionToken && (autoRemainingPercent !== null || apiRemainingPercent !== null || showGrokBot)" class="flex flex-col gap-1">
+      <div v-if="hasSessionToken && (showPlanQuota || autoRemainingPercent !== null || apiRemainingPercent !== null || showGrokBot)" class="flex flex-col gap-1">
+        <div v-if="showPlanQuota" class="flex items-center gap-1">
+          <span class="w-7 shrink-0 text-text-muted/60" v-tooltip="planHint">{{ $t('platform.cursor.planShort') }}</span>
+          <div class="flex-1 h-1.5 bg-muted rounded overflow-hidden">
+            <div class="h-full rounded transition-all"
+                 :class="getQuotaBarClass(planRemainingPercent)"
+                 :style="{ width: planRemainingPercent + '%' }">
+            </div>
+          </div>
+          <span class="text-[11px] font-medium tabular-nums w-7 text-right">{{ planRemainingPercent }}%</span>
+        </div>
         <div v-if="autoRemainingPercent !== null" class="flex items-center gap-1">
           <span class="w-7 shrink-0 text-text-muted/60" v-tooltip="$t('platform.cursor.autoAvailableHint')">{{ $t('platform.cursor.autoShort') }}</span>
           <div class="flex-1 h-1.5 bg-muted rounded overflow-hidden">
@@ -253,6 +263,9 @@ const emit = defineEmits(['switch', 'delete', 'select', 'account-updated', 'acco
 const hasSessionToken = computed(() => !!props.account.token?.workos_cursor_session_token)
 
 const {
+  planRemainingPercent,
+  planSpend,
+  showPlanQuota,
   autoRemainingPercent,
   apiRemainingPercent,
   grokBotRemaining,
@@ -260,6 +273,11 @@ const {
   grokBotResetLabel,
   getQuotaBarClass
 } = useCursorQuota(() => props.account)
+
+const planHint = computed(() => {
+  const base = $t('platform.cursor.planAvailableHint')
+  return planSpend.value ? `${base} · ${planSpend.value}` : base
+})
 
 const grokBotHint = computed(() => {
   const base = $t('platform.cursor.grokBotAvailableHint')

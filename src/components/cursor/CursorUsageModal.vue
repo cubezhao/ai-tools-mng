@@ -43,10 +43,15 @@
           <div class="text-xs text-text-muted mb-1">{{ $t('cursorUsage.totalCost') }}</div>
           <div v-if="individualUsage?.plan?.breakdown" class="text-[11px] text-text-muted mb-1">{{ $t('cursorUsage.onPlan') }}: {{ $t('cursorUsage.included') }}: ${{ formatCents(individualUsage.plan.breakdown.included) }} {{ $t('cursorUsage.bonus') }}: ${{ formatCents(individualUsage.plan.breakdown.bonus) }}</div>
           <div class="text-lg font-semibold text-text-strong">${{ (aggregatedData?.totalCostCents / 100).toFixed(2) || '0.00' }}</div>
-          <div v-if="individualUsage?.onDemand?.enabled" class="text-[11px] text-text-muted mt-1">{{ $t('cursorUsage.onDemand') }}: ${{ formatCents(individualUsage.onDemand.used) }} / ${{ formatCents(individualUsage.onDemand.limit) }}</div>
+          <div v-if="individualUsage?.onDemand?.enabled" class="text-[11px] text-text-muted mt-1">{{ $t('cursorUsage.onDemand') }}: ${{ formatCents(individualUsage.onDemand.used) }}{{ onDemandLimitLabel }}</div>
         </div>
       </div>
-      <div v-if="autoRemainingPercent !== null || apiRemainingPercent !== null || showGrokBot" class="mt-3 grid gap-3" :class="showGrokBot ? 'grid-cols-3' : 'grid-cols-2'">
+      <div v-if="showPlanQuota || autoRemainingPercent !== null || apiRemainingPercent !== null || showGrokBot" class="mt-3 grid gap-3" :class="quotaGridClass">
+        <div v-if="showPlanQuota" class="rounded-md border border-border px-3 py-2">
+          <div class="text-[11px] text-text-muted" v-tooltip="$t('platform.cursor.planAvailableHint')">{{ $t('platform.cursor.planAvailable') }}</div>
+          <div class="text-sm font-semibold tabular-nums">{{ planRemainingPercent }}%</div>
+          <div v-if="planSpend" class="text-[11px] text-text-muted tabular-nums">{{ planSpend }}</div>
+        </div>
         <div v-if="autoRemainingPercent !== null" class="rounded-md border border-border px-3 py-2">
           <div class="text-[11px] text-text-muted" v-tooltip="$t('platform.cursor.autoAvailableHint')">{{ $t('platform.cursor.autoAvailable') }}</div>
           <div class="text-sm font-semibold tabular-nums">{{ autoRemainingPercent }}%</div>
@@ -185,11 +190,24 @@ const tabs = [
 const sessionToken = computed(() => props.account.token?.workos_cursor_session_token)
 const individualUsage = computed(() => props.account.individual_usage)
 const {
+  planRemainingPercent,
+  planSpend,
+  showPlanQuota,
   autoRemainingPercent,
   apiRemainingPercent,
   grokBotRemaining,
   showGrokBot
 } = useCursorQuota(() => props.account)
+const QUOTA_GRID_CLASSES = ['grid-cols-1', 'grid-cols-1', 'grid-cols-2', 'grid-cols-3', 'grid-cols-4']
+const quotaGridClass = computed(() => {
+  const count = [
+    showPlanQuota.value,
+    autoRemainingPercent.value !== null,
+    apiRemainingPercent.value !== null,
+    showGrokBot.value
+  ].filter(Boolean).length
+  return QUOTA_GRID_CLASSES[count]
+})
 const isChartView = computed(() => activeTab.value === 'charts')
 const chartEvents = ref([])
 const chartAllData = ref(false)
@@ -204,6 +222,12 @@ const formatCents = (value) => {
   if (!value && value !== 0) return '0.00'
   return (value / 100).toFixed(2)
 }
+
+// limit 为空表示未设置 On-Demand 上限，不能渲染成 $0.00
+const onDemandLimitLabel = computed(() => {
+  const limit = individualUsage.value?.onDemand?.limit
+  return limit === null || limit === undefined ? '' : ` / $${formatCents(limit)}`
+})
 
 // 日期格式化
 const getDateRange = (days) => {
