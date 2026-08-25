@@ -81,9 +81,15 @@ impl GrokBotUsage {
 
 /// Plan 用量
 ///
-/// 美分字段（used / limit / remaining）来自实时账单流水，是官方仪表盘文案
-/// “You've used X% of your included usage” 的口径；
-/// percent 字段是另一套缓存聚合指标，官方确认不等于 used / limit，且会滞后。
+/// 这里有两套互不相通的口径，不能互相换算：
+/// - 美分字段（used / limit / remaining / breakdown）：limit 是套餐月费美分
+///   （Pro = 2000），breakdown.included / limit 就是仪表盘横幅
+///   “You've used X% of your included usage”。
+/// - percent 字段：Spending 页三条进度条。autoPercentUsed 是 Cursor Models 池、
+///   apiPercentUsed 是 Other Models 池、totalPercentUsed 是两池花费除以两池
+///   合计预算。官方确认它们「不是简单的 totalSpend / limit，用的是另一套内部
+///   指标」，分母是各池真实预算，远大于 limit，所以数值天然对不上。
+///
 /// 两类字段都可能缺失（团队/企业账号），缺失必须保持 None，
 /// 否则会被当成 0 而在界面上显示成“额度全满”。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,15 +124,15 @@ pub struct PlanUsage {
     pub total_percent_used: Option<f64>,
 }
 
-/// Plan 用量明细
+/// Plan 用量明细（included 是横幅百分比的分子，缺失同样不能当 0）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanBreakdown {
-    #[serde(default, deserialize_with = "null_as_zero")]
-    pub included: f64,
-    #[serde(default, deserialize_with = "null_as_zero")]
-    pub bonus: f64,
-    #[serde(default, deserialize_with = "null_as_zero")]
-    pub total: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub included: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bonus: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total: Option<f64>,
 }
 
 /// On-Demand 用量（limit / remaining 为 null 表示未设上限）
@@ -714,7 +720,10 @@ mod tests {
         assert_eq!(plan.used, Some(1288.0));
         assert_eq!(plan.limit, Some(2000.0));
         assert_eq!(plan.remaining, Some(712.0));
+        assert_eq!(plan.breakdown.as_ref().unwrap().included, Some(1288.0));
+        assert_eq!(plan.breakdown.as_ref().unwrap().bonus, Some(0.0));
         assert!((plan.auto_percent_used.unwrap() - 3.8966666666666665).abs() < 1e-9);
+        assert!((plan.total_percent_used.unwrap() - 3.733333333333334).abs() < 1e-9);
 
         // On-Demand 无上限时保持 None，不能退化成 $0 上限
         let on_demand = usage.on_demand.unwrap();
@@ -755,5 +764,30 @@ mod tests {
         assert!(plan.get("autoPercentUsed").is_none());
         assert!(plan.get("used").is_none());
         assert!(plan.get("limit").is_none());
+    }
+
+    #[test]
+    fn null_breakdown_entries_stay_none() {
+        let raw = serde_json::json!({
+            "individualUsage": {
+                "plan": {
+                    "enabled": true,
+                    "limit": 2000,
+                    "breakdown": { "included": null, "bonus": 0 }
+                }
+            }
+        });
+
+        let summary: UsageSummary = serde_json::from_value(raw).unwrap();
+        let breakdown = summary
+            .individual_usage
+            .and_then(|u| u.plan)
+            .and_then(|p| p.breakdown)
+            .expect("breakdown present");
+
+        // included 缺失时若退化成 0，界面会把套餐算成一分没用
+        assert_eq!(breakdown.included, None);
+        assert_eq!(breakdown.bonus, Some(0.0));
+        assert_eq!(breakdown.total, None);
     }
 }

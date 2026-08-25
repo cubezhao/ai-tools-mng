@@ -64,7 +64,7 @@
 
     <!-- 可用额度 -->
     <td class="w-[150px] px-2.5 py-3.5 border-b border-border/50 align-top whitespace-nowrap text-[12px] text-text-muted">
-      <div v-if="hasSessionToken && (showPlanQuota || autoRemainingPercent !== null || apiRemainingPercent !== null || showGrokBot)" class="flex flex-col gap-1">
+      <div v-if="hasSessionToken && (showPlanQuota || totalRemainingPercent !== null || autoRemainingPercent !== null || apiRemainingPercent !== null || showGrokBot)" class="flex flex-col gap-1">
         <div v-if="showPlanQuota" class="flex items-center gap-1">
           <span class="w-7 shrink-0 text-text-muted/60" v-tooltip="planHint">{{ $t('platform.cursor.planShort') }}</span>
           <div class="flex-1 h-1.5 bg-muted rounded overflow-hidden">
@@ -74,6 +74,16 @@
             </div>
           </div>
           <span class="text-[11px] font-medium tabular-nums w-7 text-right">{{ planRemainingPercent }}%</span>
+        </div>
+        <div v-if="totalRemainingPercent !== null" class="flex items-center gap-1">
+          <span class="w-7 shrink-0 text-text-muted/60" v-tooltip="$t('platform.cursor.totalAvailableHint')">{{ $t('platform.cursor.totalShort') }}</span>
+          <div class="flex-1 h-1.5 bg-muted rounded overflow-hidden">
+            <div class="h-full rounded transition-all"
+                 :class="getQuotaBarClass(totalRemainingPercent)"
+                 :style="{ width: totalRemainingPercent + '%' }">
+            </div>
+          </div>
+          <span class="text-[11px] font-medium tabular-nums w-7 text-right">{{ totalRemainingPercent }}%</span>
         </div>
         <div v-if="autoRemainingPercent !== null" class="flex items-center gap-1">
           <span class="w-7 shrink-0 text-text-muted/60" v-tooltip="$t('platform.cursor.autoAvailableHint')">{{ $t('platform.cursor.autoShort') }}</span>
@@ -266,6 +276,7 @@ const {
   planRemainingPercent,
   planSpend,
   showPlanQuota,
+  totalRemainingPercent,
   autoRemainingPercent,
   apiRemainingPercent,
   grokBotRemaining,

@@ -191,6 +191,27 @@
         </div>
       </div>
 
+      <!-- 两池合计剩余（Spending 页 Total 进度条） -->
+      <div v-if="totalRemainingPercent !== null && hasSessionToken" class="flex items-center gap-1 min-h-6">
+        <div class="flex items-center gap-1.5 w-[90px] shrink-0 text-text-muted text-xs">
+          <svg class="w-3.5 h-3.5 shrink-0 opacity-70" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M11 2v20c-5.07-.5-9-4.79-9-10s3.93-9.5 9-10zm2.03 0v8.99H22c-.47-4.74-4.24-8.52-8.97-8.99zm0 11.01V22c4.74-.47 8.5-4.25 8.97-8.99h-8.97z"/>
+          </svg>
+          <span v-tooltip="$t('platform.cursor.totalAvailableHint')">{{ $t('platform.cursor.totalAvailable') }}</span>
+        </div>
+        <div class="flex-1 flex items-center gap-1">
+          <div class="flex-1 h-1.5 bg-muted rounded overflow-hidden">
+            <div class="h-full rounded transition-all"
+                 :class="getQuotaBarClass(totalRemainingPercent)"
+                 :style="{ width: totalRemainingPercent + '%' }">
+            </div>
+          </div>
+          <span class="text-[11px] font-medium tabular-nums text-text-muted w-8 text-right">
+            {{ totalRemainingPercent }}%
+          </span>
+        </div>
+      </div>
+
       <!-- Auto 剩余 -->
       <div v-if="autoRemainingPercent !== null && hasSessionToken" class="flex items-center gap-1 min-h-6">
         <div class="flex items-center gap-1.5 w-[90px] shrink-0 text-text-muted text-xs">
@@ -376,6 +397,7 @@ const {
   planRemainingPercent,
   planSpend,
   showPlanQuota,
+  totalRemainingPercent,
   autoRemainingPercent,
   apiRemainingPercent,
   grokBotRemaining,

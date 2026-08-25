@@ -29,6 +29,13 @@ function clampPercent(percent) {
   return Math.min(100, Math.max(0, Math.round(percent)))
 }
 
+/**
+ * 把官方的「已用百分比」翻成剩余百分比。
+ *
+ * 用于 autoPercentUsed / apiPercentUsed / totalPercentUsed —— 它们分别是
+ * Spending 页 Cursor Models / Other Models / Total 三条进度条，也是实际
+ * 限流依据。totalPercentUsed 是两池花费除以两池合计预算，不是另外两个的均值。
+ */
 export function remainingPercentFromUsed(used) {
   const percentUsed = toFiniteNumber(used)
   if (percentUsed === null) return null
@@ -36,35 +43,47 @@ export function remainingPercentFromUsed(used) {
 }
 
 /**
- * 套餐（included usage）剩余百分比。
+ * 解析仪表盘横幅 “You've used X% of your included usage” 的分子分母。
  *
- * 取 plan 的美分字段而非 autoPercentUsed / apiPercentUsed：官方说明这两个
- * percent 字段是另一套缓存聚合指标，不等于 used / limit，且在活跃账号上会滞后
- * 数天；仪表盘文案 “You've used X% of your included usage” 用的正是美分口径。
+ * 官方说明该横幅用的是 includedSpend / limit，对应 usage-summary 里的
+ * breakdown.included / limit，所以优先取 breakdown.included；它缺失时
+ * 才退回 remaining、used（used 含 bonus 花费，会略高于横幅）。
  */
-export function planRemainingPercentFromCents(plan) {
+function planIncludedSpend(plan) {
   if (!plan) return null
   const limit = toFiniteNumber(plan.limit)
   if (limit === null || limit <= 0) return null
 
+  const included = toFiniteNumber(plan.breakdown?.included)
+  if (included !== null) return { spent: included, limit }
+
   const remaining = toFiniteNumber(plan.remaining)
-  if (remaining !== null) {
-    return clampPercent((remaining / limit) * 100)
-  }
+  if (remaining !== null) return { spent: limit - remaining, limit }
+
   const used = toFiniteNumber(plan.used)
-  if (used === null) return null
-  return clampPercent(100 - (used / limit) * 100)
+  if (used !== null) return { spent: used, limit }
+
+  return null
+}
+
+/**
+ * 套餐（included usage）剩余百分比，对齐仪表盘横幅文案。
+ *
+ * 这条口径只对应横幅那句话，不对应 Spending 页的进度条：进度条来自
+ * autoPercentUsed / apiPercentUsed / totalPercentUsed，分母是两个独立
+ * 用量池的预算，而 limit 是套餐月费美分（Pro = 2000），两者量级不同。
+ */
+export function planRemainingPercentFromCents(plan) {
+  const spend = planIncludedSpend(plan)
+  if (!spend) return null
+  return clampPercent(100 - (spend.spent / spend.limit) * 100)
 }
 
 /** 套餐额度的金额说明，如 `$12.88 / $20.00` */
 export function planSpendLabel(plan) {
-  if (!plan) return ''
-  const limit = toFiniteNumber(plan.limit)
-  if (limit === null || limit <= 0) return ''
-  const remaining = toFiniteNumber(plan.remaining)
-  const used = toFiniteNumber(plan.used) ?? (remaining === null ? null : limit - remaining)
-  if (used === null) return ''
-  return `$${(used / 100).toFixed(2)} / $${(limit / 100).toFixed(2)}`
+  const spend = planIncludedSpend(plan)
+  if (!spend) return ''
+  return `$${(spend.spent / 100).toFixed(2)} / $${(spend.limit / 100).toFixed(2)}`
 }
 
 export function grokBotRemainingPercent(grokBot) {

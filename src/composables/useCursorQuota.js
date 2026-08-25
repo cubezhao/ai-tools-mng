@@ -18,6 +18,10 @@ export function useCursorQuota(getAccount) {
 
   const showPlanQuota = computed(() => planRemainingPercent.value !== null)
 
+  const totalRemainingPercent = computed(() =>
+    remainingPercentFromUsed(plan.value?.totalPercentUsed)
+  )
+
   const autoRemainingPercent = computed(() =>
     remainingPercentFromUsed(plan.value?.autoPercentUsed)
   )
@@ -47,6 +51,7 @@ export function useCursorQuota(getAccount) {
     planRemainingPercent,
     planSpend,
     showPlanQuota,
+    totalRemainingPercent,
     autoRemainingPercent,
     apiRemainingPercent,
     grokBotRemaining,
