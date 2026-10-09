@@ -4,7 +4,7 @@
 //! 依优先级 failover，串联 入站→canonical→渠道出站→响应/流式回转 的完整链路，并旁路
 //! 采集用量（token / TTFT / 时延，不计价）。Responses↔Codex 同线型直转在此短路透传。
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -18,7 +18,7 @@ use warp::{Filter, Rejection, Reply};
 
 use super::affinity::extract_session_key;
 use super::canonical::{StreamEvent, Usage};
-use super::config::{ChannelKind, GatewayChannel};
+use super::config::{ChannelKind, GatewayChannel, GatewayConfig};
 use super::executor::GatewayExecutor;
 use super::translate::stream_bridge::{
     SseDecoder, StreamBridge, StreamSanitizer, inbound_for, outbound_for,
@@ -62,11 +62,17 @@ fn with_wire(
     warp::any().map(move || wire)
 }
 
-/// 网关路由（POST /gateway/v1/{chat/completions,responses,messages}）
+/// 网关路由（GET /gateway/v1/models，POST /gateway/v1/{chat/completions,responses,messages}）
 pub fn gateway_routes_from_state(
     state: Arc<AppState>,
 ) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
     let state_filter = warp::any().map(move || state.clone());
+
+    let models = warp::path!("gateway" / "v1" / "models")
+        .and(warp::get())
+        .and(state_filter.clone())
+        .and(warp::header::headers_cloned())
+        .and_then(list_models);
 
     let common = warp::post()
         .and(state_filter.clone())
@@ -89,7 +95,38 @@ pub fn gateway_routes_from_state(
         .and(common)
         .and_then(handle);
 
-    chat.or(responses).or(messages)
+    models.or(chat).or(responses).or(messages)
+}
+
+/// 仅公布已启用渠道配置的客户端模型别名，去重后按 id 排序。
+fn model_list(cfg: &GatewayConfig) -> Value {
+    let ids: BTreeSet<&str> = cfg
+        .channels
+        .iter()
+        .filter(|channel| channel.enabled)
+        .flat_map(|channel| channel.models.iter().map(|model| model.id()))
+        .filter(|id| !id.trim().is_empty())
+        .collect();
+    let data: Vec<Value> = ids
+        .into_iter()
+        .map(|id| json!({"id": id, "object": "model", "created": 0, "owned_by": "atm"}))
+        .collect();
+    json!({"object": "list", "data": data})
+}
+
+async fn list_models(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+) -> Result<impl Reply, Rejection> {
+    let cfg = state
+        .gateway_config
+        .lock()
+        .map_err(|_| reject(GatewayRejection::Internal("网关配置锁中毒".into())))?;
+    if !cfg.enabled {
+        return Err(reject(GatewayRejection::Disabled));
+    }
+    authorize(&headers, &cfg.api_key).map_err(reject)?;
+    Ok(warp::reply::json(&model_list(&cfg)))
 }
 
 /// 入站协议名（落用量记录）
